@@ -21,11 +21,10 @@ def canny(
     image,
     high_threshold: int = 200,
     low_threshold: int = 100,
-    # TODO 实现在调用时不输出展示的过程图像
     debugging=True,
 ):
     """
-    给出numpy数组图像，和两个阈值
+    给出numpy数组图像，和迟滞阈值法两个阈值
     """
     # 展示原图性质
     if debugging:
@@ -43,8 +42,9 @@ def canny(
             [2, 4, 5, 4, 2],
         ],
         dtype=np.float32,
-    )
+    )  # 使用固定大小的kernel
     gaussian_kernel = gaussian_kernel / 159.0
+    # TODO 改成生成不同大小的高斯kernel做滤波
     if debugging:
         print(gaussian_kernel)
     h, w = image.shape
@@ -64,10 +64,11 @@ def canny(
 
     # ----------------------------------------sobel梯度幅值
     # 现在有image_smmothed
+    # 创建sobel算子
     sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], np.float32)
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], np.float32)
     h, w = image.shape
-    # 应用sobel算子
+    # 应用sobel算子，计算两个方向的梯度
     grad_x = conv2d(
         image_smoothed,
         sobel_x,
@@ -86,21 +87,18 @@ def canny(
     )  # 计算对应元素的梯度均值，hypot相当于直角三角形求斜边
     logging.info("计算梯度完成")
 
-    # show_img(grad, "grad")
-    print(grad.max())
-    grad = grad / grad.max() * 255  # 需要整理到灰度区间内
+    # print(grad.max())
+    grad = grad / grad.max() * 255  # 整理到灰度区间内
     if debugging:
         show_img(grad, "grad")
 
-    # grad = np.zeros((h - 2, w - 2))
-    # direction = np.zeros((h - 2, w - 2))
     direction = np.arctan2(
         grad_y, grad_x
-    )  # arctan2函数相比于arctan可以忽略可能遇到的非常值，比如，分母为0，x=C
-    # direction = np.abs(direction)
+    )  # arctan2函数相比于arctan接受两个参数，可以忽略可能遇到的非常值，比如，分母为0，x=C
+
     direction[direction < 0] += (
         np.pi
-    )  # 不能用绝对值，虽然不影响边缘检测，但是影响霍夫圆识别
+    )  # 将角度统一到正区间，减少方向判断数量（不能用绝对值，虽然不影响边缘检测，但是影响霍夫圆识别
 
     if debugging:
         analyze_array(direction, "direction")
@@ -112,10 +110,12 @@ def canny(
     h, w = grad.shape
     grad_nms = np.zeros((h, w), dtype=np.int32)
 
+    # 计算nms，只保留每个像素梯度方向的像素
     for x in tqdm(range(1, h - 1), desc="nms calculating"):
         for y in range(1, w - 1):
             # 临近像素p 设置为255是因为避免在没有进入分支的情况下被误分
             p1, p2 = 256, 256
+            # 方向判断
             if (
                 0 < direction[x, y] < np.pi / 8
                 or np.pi * 7 / 8 < direction[x, y] < np.pi
@@ -154,14 +154,14 @@ def canny(
     uncertain = np.where((low_threshold <= grad_nms) & (grad_nms < high_threshold))
 
     edge[strong[0], strong[1]] = 255
-    edge[uncertain[0], uncertain[1]] = 50
+    edge[uncertain[0], uncertain[1]] = 100
 
     if debugging:
         show_img(edge, "edge")
     else:
         show_img(edge, "edge", analysis=False)
 
-    print(image.shape, edge.shape, direction.shape)
+    # print(image.shape, edge.shape, direction.shape) #这行代表处理前后形状不改变
 
     return edge, direction
 
@@ -170,7 +170,7 @@ def hough_circle(
     image,
     high_threshold=200,
     low_threshold=100,
-    min_r=50,
+    min_r=40,
     max_r=200,
     min_voting=30,
     min_center_distance=10,
@@ -193,7 +193,7 @@ def hough_circle(
     for i in tqdm(range(len(x)), desc="voting"):
         # 遍历所有的边缘点
         for r in range(min_r, max_r):
-            # 遍历所有的半径
+            # 遍历所有的半径，投票
             delta_x = r * np.sin(direction[x[i], y[i]])
             delta_y = r * np.cos(direction[x[i], y[i]])
             vx = int(np.around(x[i] + delta_x))
@@ -210,7 +210,33 @@ def hough_circle(
     if debugging:  # 分析圆心分布,按照票数从低到高
         for i in range(2, 20, 3):
             analyze_array(vote_space[vote_space > i], "vote space")
-    # 筛选出可能的圆心
+
+    # 筛选出可能的候选圆心（调试方法，
+    circles = []
+    if debugging:
+        """
+        因为发现筛选圆心的过程时间代价比较小，
+        所以可以尝试使用不同的最小投票数量来画出不同的圆，找到最适合的圆
+        """
+        for v in range(5, np.max(vote_space), 5):
+            print(f"voting threshold:{v}")
+            circles = _center_combine(vote_space, v, min_center_distance)
+            _draw_circle(image, circles)
+            print("-" * 100)
+    else:
+        circles = _center_combine(vote_space, min_voting, min_center_distance)
+        _draw_circle(image, circles)
+
+    # print(circles)  # 打印所有的圆坐标和半径
+    return circles
+
+
+def _center_combine(
+    vote_space,
+    min_voting,
+    min_dist,
+):
+    # 使用最小投票数筛选圆心
     circles_to_be_selected = np.where(
         vote_space > min_voting
     )  # 返回x,y,r三个数组组成的list
@@ -219,7 +245,6 @@ def hough_circle(
         circles_to_be_selected, axis=1
     )  # 返回圆心[x,y,r]组成的列表
     # 判断圆心之间的距离，如果小于最小圆心距离就当作是一个圆
-
     # 相对比较笨的方法，双层循环
     selected_label = np.zeros(
         len(circles_to_be_selected), dtype=np.int8
@@ -239,7 +264,7 @@ def hough_circle(
             if selected_label[j] > 0:
                 continue
             # 判断距离是否小于阈值，小于则归为一个圆
-            if (x - centerj[0]) ** 2 + (y - centerj[1]) ** 2 < min_center_distance**2:
+            if (x - centerj[0]) ** 2 + (y - centerj[1]) ** 2 < min_dist**2:
                 # 同一个圆
                 same_center.append(centerj)
                 x, y, r = np.mean(
@@ -250,10 +275,16 @@ def hough_circle(
 
         circles.append([x, y, r])
 
-    print(circles)
-
-    circles = np.uint32(np.around(circles))
+    circles = np.uint32(np.around(circles))  # 整数圆心
     return circles
+
+
+def _draw_circle(img, circles):
+    img_c = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    for i in circles:
+        cv2.circle(img_c, (i[1], i[0]), i[2], (0, 255, 0), 5)  # 绿色的圆
+        cv2.circle(img_c, (i[1], i[0]), 2, (255, 0, 0), 5)  # 红色的圆心
+    show_img(img_c, analysis=False)
 
 
 def show_img(image, title="", analysis=True):
@@ -273,6 +304,14 @@ def analyze_array(array, title="", bins=50):
     """
     分析一个数组的数据分布，绘图的方式展现
     """
+    try:
+        if np.size(array) == 0 or array is None:
+            print("analyze: 数组不存在或者大小为0")
+            return
+    except:  # noqa: E722
+        print("analyze: 数组不存在或者大小为0")
+        return
+
     print(array.dtype)
     print(array.shape)
     min_value = np.min(array)
@@ -297,6 +336,19 @@ def analyze_array(array, title="", bins=50):
 
 
 if __name__ == "__main__":
-    img = cv2.imread("./img/coins3.jpg", cv2.IMREAD_GRAYSCALE)
-    # canny(img)
-    hough_circle(img)
+    # 针对图片的精调参数
+    config = {
+        "./img/coins3.jpg": {
+            "high_threshold": 100,
+            "low_threshold": 50,
+            "min_r": 50,
+            "max_r": 200,
+            "min_voting": 15,
+            "debugging": False,
+        },
+    }
+
+    img_path = "./img/coins3.jpg"
+    # test hough
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    circles = hough_circle(img, **config[img_path])
