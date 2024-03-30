@@ -11,8 +11,9 @@ from tqdm import tqdm
 
 logging.basicConfig(
     filename="exp.log",
+    filemode="w",
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(funcName)s - %(message)s",
 )
 
 
