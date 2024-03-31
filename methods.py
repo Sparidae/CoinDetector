@@ -48,6 +48,7 @@ def canny(
     if debugging:
         print(gaussian_kernel)
     h, w = image.shape
+    print(f"image shape:{image.shape}")
 
     # 应用高斯平滑
     image_smoothed = conv2d(
@@ -175,6 +176,8 @@ def hough_circle(
     min_voting=30,
     min_center_distance=10,
     debugging=True,
+    vt_debugging=False,  # voting_threshold_debugging
+    vtd_step=5,
 ):
     # 使用canny提取边缘，得到的是int32类型的图像数组最大255
     edge, direction = canny(
@@ -187,6 +190,8 @@ def hough_circle(
     # 定义参数空间x,y,r
     h, w = edge.shape
     vote_space = np.zeros((h, w, max_r), dtype=np.int32)  # 投票假设落于整数空间
+    # FIXME 难以处理大图片，4096*3072*500就已经需要分配23G，霍夫投票空间实际上是一个相当稀疏的矩阵
+    # 可以改进为int16
 
     # 投票,每个点投出一个圆锥的两条母线
     x, y = np.where(edge > 250)
@@ -213,15 +218,17 @@ def hough_circle(
 
     # 筛选出可能的候选圆心（调试方法，
     circles = []
-    if debugging:
+    if vt_debugging:
         """
         因为发现筛选圆心的过程时间代价比较小，
         所以可以尝试使用不同的最小投票数量来画出不同的圆，找到最适合的圆
         """
-        for v in range(5, np.max(vote_space), 5):
+        for v in range(5, np.max(vote_space), vtd_step):
             print(f"voting threshold:{v}")
             circles = _center_combine(vote_space, v, min_center_distance)
             _draw_circle(image, circles)
+            cl = [c[2] for c in circles]  # 找到最大值
+            print(f"Above circles: min_r{min(cl)},max_r{max(cl)}")
             print("-" * 100)
     else:
         circles = _center_combine(vote_space, min_voting, min_center_distance)
