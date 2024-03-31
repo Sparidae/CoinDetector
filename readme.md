@@ -22,4 +22,3 @@ This program implements coin detection, primarily using the Canny and Hough Circ
 ├── requiements.txt
 └── simple.ipynb    # opencv的简单实现，效果展示
 ```
-

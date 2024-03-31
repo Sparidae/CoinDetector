@@ -22,15 +22,17 @@ def canny(
     high_threshold: int = 200,
     low_threshold: int = 100,
     debugging=True,
+    quiet=False,
 ):
     """
     给出numpy数组图像，和迟滞阈值法两个阈值
     """
     # 展示原图性质
-    if debugging:
+    if debugging and not quiet:
         show_img(image, "image")
-    else:
+    elif not quiet:
         show_img(image, "image", analysis=False)
+
     # ----------------------------------------高斯滤波,默认5*5滤波
     # 输入image
     gaussian_kernel = np.array(
@@ -45,10 +47,12 @@ def canny(
     )  # 使用固定大小的kernel
     gaussian_kernel = gaussian_kernel / 159.0
     # TODO 改成生成不同大小的高斯kernel做滤波
-    if debugging:
+
+    if debugging and not quiet:
         print(gaussian_kernel)
     h, w = image.shape
-    print(f"image shape:{image.shape}")
+    if not quiet:
+        print(f"image shape:{image.shape}")
 
     # 应用高斯平滑
     image_smoothed = conv2d(
@@ -60,7 +64,7 @@ def canny(
 
     # show_img(image_smoothed, "image_smoothed")
     image_smoothed = np.float32(image_smoothed)
-    if debugging:
+    if debugging and not quiet:
         show_img(image_smoothed, "image_smoothed")
 
     # ----------------------------------------sobel梯度幅值
@@ -80,7 +84,7 @@ def canny(
         sobel_y,
         mode="constant",
     )
-    if debugging:
+    if debugging and not quiet:
         show_img(grad_x, "grad_x")
         show_img(grad_y, "grad_y")
     grad = np.hypot(
@@ -90,7 +94,7 @@ def canny(
 
     # print(grad.max())
     grad = grad / grad.max() * 255  # 整理到灰度区间内
-    if debugging:
+    if debugging and not quiet:
         show_img(grad, "grad")
 
     direction = np.arctan2(
@@ -101,7 +105,7 @@ def canny(
         np.pi
     )  # 将角度统一到正区间，减少方向判断数量（不能用绝对值，虽然不影响边缘检测，但是影响霍夫圆识别
 
-    if debugging:
+    if debugging and not quiet:
         analyze_array(direction, "direction")
     logging.info("计算梯度方向完成")
 
@@ -141,7 +145,7 @@ def canny(
 
     logging.info("计算NMS完成")
     grad_nms = grad_nms / grad_nms.max() * 255
-    if debugging:
+    if debugging and not quiet:
         show_img(grad_nms, "grad_nms")
 
     # ----------------------------------------迟滞阈值 门限法
@@ -157,9 +161,9 @@ def canny(
     edge[strong[0], strong[1]] = 255
     edge[uncertain[0], uncertain[1]] = 100
 
-    if debugging:
+    if debugging and not quiet:
         show_img(edge, "edge")
-    else:
+    elif not quiet:
         show_img(edge, "edge", analysis=False)
 
     # print(image.shape, edge.shape, direction.shape) #这行代表处理前后形状不改变
@@ -168,16 +172,18 @@ def canny(
 
 
 def hough_circle(
-    image,
-    high_threshold=200,
-    low_threshold=100,
-    min_r=40,
-    max_r=200,
-    min_voting=30,
-    min_center_distance=10,
+    image,  # 未经处理的图像
+    high_threshold=200,  # 边缘高阈值 最大为255
+    low_threshold=100,  # 边缘低阈值
+    min_r=40,  # 最小圆半径
+    max_r=200,  # 最大圆半径
+    min_voting=30,  # 最小投票数量
+    min_center_distance=10,  # 最小圆心距离
+    # 调试选项
     debugging=True,
     vt_debugging=False,  # voting_threshold_debugging
-    vtd_step=5,
+    vtd_step=5,  # 最小投票数量递增阈值，仅在vt_debugging开启时有效
+    quiet=False,  # 安静，只展示结果，该选项设置为True会屏蔽上述调试选项
 ):
     # 使用canny提取边缘，得到的是int32类型的图像数组最大255
     edge, direction = canny(
@@ -185,6 +191,7 @@ def hough_circle(
         high_threshold=high_threshold,
         low_threshold=low_threshold,
         debugging=debugging,
+        quiet=quiet,
     )
 
     # 定义参数空间x,y,r
@@ -212,13 +219,13 @@ def hough_circle(
 
     # 抑制圆心
     # analyze_array(vote_space[vote_space > 10], "vote space")  # 检查形状
-    if debugging:  # 分析圆心分布,按照票数从低到高
+    if debugging and not quiet:  # 分析圆心分布,按照票数从低到高
         for i in range(2, 20, 3):
             analyze_array(vote_space[vote_space > i], "vote space")
 
     # 筛选出可能的候选圆心（调试方法，
     circles = []
-    if vt_debugging:
+    if vt_debugging and not quiet:
         """
         因为发现筛选圆心的过程时间代价比较小，
         所以可以尝试使用不同的最小投票数量来画出不同的圆，找到最适合的圆
@@ -232,7 +239,7 @@ def hough_circle(
             print("-" * 100)
     else:
         circles = _center_combine(vote_space, min_voting, min_center_distance)
-        _draw_circle(image, circles)
+        _draw_circle(image, circles, quiet)
 
     # print(circles)  # 打印所有的圆坐标和半径
     return circles
@@ -286,12 +293,25 @@ def _center_combine(
     return circles
 
 
-def _draw_circle(img, circles):
+def _draw_circle(img, circles, quiet=False):
     img_c = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    img_o = img_c.copy()
     for i in circles:
-        cv2.circle(img_c, (i[1], i[0]), i[2], (0, 255, 0), 5)  # 绿色的圆
-        cv2.circle(img_c, (i[1], i[0]), 2, (255, 0, 0), 5)  # 红色的圆心
-    show_img(img_c, analysis=False)
+        cv2.circle(img_c, (i[1], i[0]), i[2], (0, 255, 0), 2)  # 绿色的圆
+        cv2.circle(img_c, (i[1], i[0]), 2, (255, 0, 0), 2)  # 红色的圆心
+
+    if quiet:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        ax1.imshow(img_o)
+        ax1.set_title("Origin Image")
+        ax2.imshow(img_c)
+        ax2.set_title("Circle Detected")
+        ax1.axis("off")
+        ax2.axis("off")
+        plt.tight_layout()
+        plt.show()
+    else:
+        show_img(img_c, analysis=False)
 
 
 def show_img(image, title="", analysis=True):
